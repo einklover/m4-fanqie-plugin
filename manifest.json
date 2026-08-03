@@ -1,0 +1,31 @@
+{
+  "id": "com.fanqie.client",
+  "name": "番茄小说",
+  "version": "0.2.17",
+  "versionCode": 28,
+  "entry": "main.lua",
+  "author": "einklover",
+  "description": "番茄小说 0.2.13: 修复正文重定向请求失败、分页按需加载与 OOM 安全缓存",
+  "files": [
+    "main.lua",
+    "storage.lua",
+    "catalog.lua",
+    "layout.lua",
+    "layout_contract.lua",
+    "api.lua",
+    "content_provider.lua",
+    "ui_template.lua",
+    "ui_template_shared.lua",
+    "ui_shelf.lua",
+    "ui_category.lua",
+    "ui_booklist.lua",
+    "ui_toc.lua",
+    "ui_reader.lua"
+  ],
+  "permissions": [
+    "display",
+    "input",
+    "filesystem.appdata",
+    "network"
+  ]
+}
