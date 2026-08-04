@@ -879,6 +879,12 @@ function step_chapter_load()
   if not chapter_job then return end
 
   if r == "done" then
+    -- progressive loader may have already queued openText
+    if screen == "loading" or screen == "toc" then
+      screen = "native_reader"
+      dirty = false
+      frame_changed = false
+    end
     clear_chapter_job()
     return
   end

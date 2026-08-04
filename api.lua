@@ -190,6 +190,50 @@ function Api.fetch_toc(bookId)
   return chapters, nil
 end
 
+-- Declarative chapter load for system progressive loader (firmware ≥ loader API).
+function Api.chapter_loader_spec(bookId, ch, relPath, openMeta)
+  local itemId = tostring((ch and ch.chapterUid) or "")
+  if itemId == "" or type(relPath) ~= "string" or relPath == "" then return nil end
+  openMeta = openMeta or {}
+  return {
+    url = HOST .. "/content?item_id=" .. itemId,
+    headers = headers(),
+    out = relPath,
+    extract = { kind = "json_field", path = { "data", "data" }, field = "content" },
+    early_bytes = 2048,
+    max_bytes = 4 * 1024 * 1024,
+    timeout_ms = 30000,
+    follow_redirects = true,
+    title = openMeta.title or "",
+    bookId = tostring(bookId or ""),
+    chapterUid = itemId,
+    progressKey = openMeta.progressKey or ("fanqie:" .. tostring(bookId) .. ":" .. itemId),
+    providerId = openMeta.providerId or "fanqie",
+    chapterIndex = openMeta.chapterIndex or 0,
+  }
+end
+
+function Api.toc_loader_spec(bookId, relPath, openMeta)
+  openMeta = openMeta or {}
+  return {
+    url = "https://fanqienovel.com/api/reader/directory/detail?bookId=" .. tostring(bookId),
+    headers = headers(),
+    out = relPath,
+    path = { "data", "chapterListWithVolume" },
+    fields = { "itemId", "title" },
+    early_rows = 40,
+    max_bytes = 4 * 1024 * 1024,
+    timeout_ms = 30000,
+    follow_redirects = true,
+    bookId = tostring(bookId or ""),
+    title = openMeta.title or "",
+    providerId = openMeta.providerId or "fanqie",
+    currentIndex = openMeta.currentIndex or 0,
+    uidField = 0,
+    titleField = 1,
+  }
+end
+
 -- One-shot full chapter text (single JSON GET; no shards).
 -- Prefer writing the scalar body directly to SD on a host that supports the
 -- file_out extension.  The response never crosses the Lua boundary, so a

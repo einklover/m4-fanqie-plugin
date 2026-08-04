@@ -1,30 +1,56 @@
--- ContentProvider: UI-first chapter content pipeline (same contract as weread).
--- Phase machine:
---   ui_first  → force paint-only until ui_committed
---   probe     → SD size check (cache hit → open native)
---   fetch     → Api.fetch_chapter_text (single JSON GET, one hop)
---   write     → atomic SD cache write
---   handoff   → reader.openText
---   done / fail
-
+-- ContentProvider: UI-first chapter pipeline (FanQie).
+-- Uses host `loader` for progressive stream + early openText when available.
+-- Loading UI: spinner / steps / bytes / elapsed (see ui_loading.lua).
 ContentProvider = {}
 
-local function status_for(job, font_ok)
-  if not job then return "" end
-  if type(job.status) == "string" and job.status ~= "" then
-    return job.status
+local function U()
+  if type(UiLoading) == "table" then return UiLoading end
+  return nil
+end
+
+local function fmt_bytes(n)
+  local u = U()
+  if u and u.fmt_bytes then return u.fmt_bytes(n) end
+  n = tonumber(n) or 0
+  if n < 1024 then return tostring(math.floor(n)) .. "B" end
+  return string.format("%.1fKB", n / 1024)
+end
+
+local function elapsed_s(job)
+  local u = U()
+  if u and u.elapsed_s then return u.elapsed_s(job and job.t0) end
+  return 0
+end
+
+local function spinner(job)
+  local u = U()
+  if u and u.spinner then return u.spinner(elapsed_s(job)) end
+  return "·"
+end
+
+local function phase_label(job, font_ok)
+  if not job then return font_ok and "加载中…" or "loading…" end
+  local u = U()
+  if u and u.loader_phase_label and job.loader_phase and job.loader_phase ~= "" then
+    local lp = u.loader_phase_label(job.loader_phase, font_ok)
+    if lp ~= "" then return lp end
   end
+  if type(job.status) == "string" and job.status ~= "" then return job.status end
   local ph = job.phase or ""
-  if ph == "fetch" then
+  if ph == "probe" then
+    return font_ok and "检查本地缓存…" or "checking cache…"
+  elseif ph == "fetch" then
     return font_ok and "下载章节…" or "downloading…"
   elseif ph == "write" then
     return font_ok and "写入缓存…" or "writing cache…"
-  elseif ph == "handoff" or ph == "probe" then
+  elseif ph == "handoff" then
     return font_ok and "打开阅读器…" or "opening reader…"
-  elseif ph == "announce" then
-    return font_ok and "下载章节…" or "downloading…"
   end
   return font_ok and "正在加载章节…" or "loading chapter…"
+end
+
+function ContentProvider.fmt_bytes(n)
+  return fmt_bytes(n)
 end
 
 function ContentProvider.begin(opts)
@@ -38,10 +64,15 @@ function ContentProvider.begin(opts)
     title = opts.title or "",
     path = opts.path or "",
     prefer = opts.prefer,
+    chapterIndex = opts.chapterIndex or 0,
     pct = 0,
     gen = 1,
     t0 = (sys and sys.millis and sys.millis()) or 0,
     status = opts.status or "",
+    bytes = 0,
+    downloaded = 0,
+    loader_phase = "",
+    sys_loader = nil,
     pending_text = nil,
     result = nil,
     fail_code = nil,
@@ -52,25 +83,51 @@ function ContentProvider.begin(opts)
 end
 
 function ContentProvider.loading_body(job, font_ok)
-  local sl = status_for(job, font_ok)
-  if job and job.phase == "paginate" then
-    local pct = job.pct or 0
-    return font_ok and string.format("正在排版… %d%%", pct) or string.format("layout… %d%%", pct)
+  if not job then
+    return font_ok and "正在加载章节…" or "loading chapter…"
   end
-  if string.find(sl, "下载", 1, true) or string.find(sl, "download", 1, true) then
-    return font_ok and "下载章节…" or "downloading…"
-  elseif string.find(sl, "写入", 1, true) or string.find(sl, "cache", 1, true) then
-    return font_ok and "写入缓存…" or "writing cache…"
-  elseif string.find(sl, "打开", 1, true) or string.find(sl, "open", 1, true) then
-    return font_ok and "打开阅读器…" or "opening reader…"
-  elseif string.find(sl, "准备", 1, true) or string.find(sl, "prepar", 1, true) then
-    return font_ok and "准备打开…" or "preparing…"
+  local sec = elapsed_s(job)
+  local lines = {}
+  lines[#lines + 1] = spinner(job) .. " " .. phase_label(job, font_ok)
+  local ph = job.phase or ""
+  if ph == "probe" then
+    lines[#lines + 1] = font_ok and "步骤 1/3 · 查缓存" or "step 1/3 cache"
+  elseif ph == "fetch" then
+    if job.sys_loader == true then
+      lines[#lines + 1] = font_ok and "步骤 2/3 · 宿主流式写盘" or "step 2/3 host stream"
+      lines[#lines + 1] = font_ok
+          and "约 2KB 正文即可打开首屏"
+          or "early open ~2KB body"
+    else
+      lines[#lines + 1] = font_ok and "步骤 2/3 · 下载正文" or "step 2/3 download"
+    end
+    if (job.bytes or 0) > 0 or (job.downloaded or 0) > 0 then
+      local n = math.max(tonumber(job.bytes) or 0, tonumber(job.downloaded) or 0)
+      lines[#lines + 1] = (font_ok and "已接收 " or "recv ") .. fmt_bytes(n)
+    else
+      lines[#lines + 1] = font_ok and "等待首包…" or "waiting first byte…"
+    end
+  elseif ph == "write" then
+    lines[#lines + 1] = font_ok and "步骤 2/3 · 写缓存" or "step 2/3 write"
+    if (job.bytes or 0) > 0 then lines[#lines + 1] = fmt_bytes(job.bytes) end
+  elseif ph == "handoff" then
+    lines[#lines + 1] = font_ok and "步骤 3/3 · 打开阅读器" or "step 3/3 open"
+    if (job.bytes or 0) > 0 then
+      lines[#lines + 1] = (font_ok and "已缓存 " or "cached ") .. fmt_bytes(job.bytes)
+    end
   end
-  return font_ok and "正在加载章节…" or "loading chapter…"
+  lines[#lines + 1] = (font_ok and "已用时 " or "elapsed ") .. tostring(sec) .. "s"
+  return table.concat(lines, "\n")
 end
 
 function ContentProvider.status_line(job, font_ok)
-  return status_for(job, font_ok)
+  local base = phase_label(job, font_ok)
+  local bits = { spinner(job) .. " " .. base }
+  local n = math.max(tonumber(job and job.downloaded) or 0, tonumber(job and job.bytes) or 0)
+  if n > 0 then bits[#bits + 1] = fmt_bytes(n) end
+  local sec = elapsed_s(job)
+  if sec >= 1 then bits[#bits + 1] = tostring(sec) .. "s" end
+  return table.concat(bits, " · ")
 end
 
 function ContentProvider.request_paint(job, status)
@@ -88,9 +145,7 @@ function ContentProvider.mark_painted(job)
   if not job then return end
   job.ui_committed = true
   job.need_paint = false
-  if job.phase == "ui_first" then
-    job.phase = "probe"
-  end
+  if job.phase == "ui_first" then job.phase = "probe" end
 end
 
 local function fail(job, code, title, body, action)
@@ -103,8 +158,6 @@ local function fail(job, code, title, body, action)
   job.pending_text = nil
 end
 
--- One cooperative backend step. Call only when not should_paint_only.
--- Returns: "continue" | "done" | "fail" | "login" (login unused for fanqie).
 function ContentProvider.step(job, deps)
   if not job or not deps then return "fail" end
   local font_ok = deps.font_ok and true or false
@@ -112,9 +165,7 @@ function ContentProvider.step(job, deps)
   local Api = deps.Api
   local log = deps.log or function() end
 
-  if job.phase == "ui_first" then
-    job.phase = "probe"
-  end
+  if job.phase == "ui_first" then job.phase = "probe" end
 
   if job.phase == "probe" then
     local path = job.path
@@ -124,15 +175,18 @@ function ContentProvider.step(job, deps)
     end
     local fsz = Storage and Storage.chapter_file_size
         and Storage.chapter_file_size(job.bookId, job.chapterUid) or nil
-    if fsz and fsz > 0 then
+    -- Prefer complete cache (.ok) when helper exists (host progressive finish).
+    local complete = true
+    if Storage and Storage.chapter_complete then
+      complete = Storage.chapter_complete(job.bookId, job.chapterUid)
+    end
+    if complete and fsz and fsz > 0 then
+      job.bytes = fsz
       job.phase = "handoff"
-      job.status = font_ok and "打开阅读器…" or "opening reader…"
-      local path2 = path
-      if (not path2 or path2 == "") and Storage and Storage.chapter_path then
-        path2 = Storage.chapter_path(job.bookId, job.chapterUid)
-        job.path = path2
-      end
-      local ok, err = deps.open_native_reader(path2, job.title, job.bookId, job.chapterUid)
+      job.status = font_ok
+          and ("缓存命中 " .. fmt_bytes(fsz) .. " · 打开…")
+          or ("cache hit " .. fmt_bytes(fsz))
+      local ok, err = deps.open_native_reader(path, job.title, job.bookId, job.chapterUid)
       if ok then
         job.phase = "done"
         job.result = "handoff"
@@ -143,8 +197,12 @@ function ContentProvider.step(job, deps)
           or ("native reader unavailable: " .. tostring(err or "no_reader")))
       return "fail"
     end
+    if fsz and fsz > 0 and not complete and Storage.clear_chapter_cache then
+      pcall(Storage.clear_chapter_cache, job.bookId, job.chapterUid)
+    end
     job.phase = "fetch"
     job.status = font_ok and "下载章节…" or "downloading…"
+    job.sys_loader = nil
     log(string.format("[FQ] fetch_announce t=%s", tostring(sys.millis())))
     return "continue"
   end
@@ -161,22 +219,104 @@ function ContentProvider.step(job, deps)
         font_ok and ("本章未缓存\n" .. body) or ("not cached\n" .. body))
       return "fail"
     end
+
+    local path = job.path
+    if (not path or path == "") and Storage and Storage.chapter_path then
+      path = Storage.chapter_path(job.bookId, job.chapterUid)
+      job.path = path
+    end
+
+    -- Host progressive loader: arm once, pump each tick, refresh bytes/phase.
+    if job.sys_loader ~= false and type(loader) == "table"
+        and type(loader.chapter) == "function" and Api.chapter_loader_spec then
+      if job.sys_loader == nil then
+        local spec = Api.chapter_loader_spec(job.bookId, { chapterUid = job.chapterUid }, path, {
+          title = job.title,
+          chapterIndex = job.chapterIndex or 0,
+        })
+        if not spec then
+          job.sys_loader = false
+        else
+          job.status = font_ok and "准备流式下载…" or "arm stream…"
+          job.loader_phase = "connecting"
+          local ok, err = loader.chapter(spec)
+          if not ok then
+            log(string.format("[FQ] loader.chapter fail %s", tostring(err)))
+            job.sys_loader = false
+            job.loader_phase = ""
+            job.status = font_ok and "流式不可用 · 回退…" or "loader fallback…"
+          else
+            job.sys_loader = true
+            job.status = font_ok and "连接服务器 (TLS)…" or "TLS connect…"
+            return "continue"  -- paint connecting before first pump
+          end
+        end
+      end
+      if job.sys_loader == true then
+        if type(loader.pump) == "function" then
+          local st0 = (type(loader.status) == "function" and loader.status()) or {}
+          if st0.phase == "connecting" then
+            loader.pump({ ms = 50, bytes = 1024 })
+          else
+            loader.pump({ ms = 120, bytes = 24 * 1024 })
+          end
+        end
+        local st = (type(loader.status) == "function" and loader.status()) or {}
+        job.loader_phase = tostring(st.phase or job.loader_phase or "")
+        if (st.bytes or 0) > 0 then
+          job.bytes = st.bytes
+          job.downloaded = st.bytes
+        end
+        if job.loader_phase == "connecting" then
+          job.status = font_ok and "连接服务器 (TLS)…" or "TLS connect…"
+        elseif job.loader_phase == "streaming" then
+          if (job.bytes or 0) > 0 then
+            job.status = (font_ok and "流式下载 " or "dl ") .. fmt_bytes(job.bytes)
+          else
+            job.status = font_ok and "等待首包…" or "waiting first byte…"
+          end
+        elseif job.loader_phase == "early" then
+          job.status = (font_ok and "首屏已开 · 续传 " or "early · ")
+              .. fmt_bytes(job.bytes or 0)
+        end
+        if st.error and st.error ~= "" and not st.early and not st.done then
+          job.sys_loader = false
+          job.loader_phase = ""
+          log(string.format("[FQ] loader fail → hop err=%s", tostring(st.error)))
+          job.status = font_ok and ("回退下载 · " .. tostring(st.error)) or tostring(st.error)
+        elseif st.early or st.done then
+          job.phase = "done"
+          job.result = "handoff"
+          job.bytes = st.bytes or job.bytes
+          job.loader_phase = st.done and "done" or "early"
+          log(string.format("[FQ] loader_handoff early=%s bytes=%s",
+            tostring(st.early), tostring(st.bytes)))
+          return "done"
+        else
+          return "continue"
+        end
+      end
+    end
+
+    -- Legacy / fallback: one-shot to file or text.
     log(string.format("[FQ] fetch_begin t=%s", tostring(sys.millis())))
-    if Api.fetch_chapter_to_file and Storage.chapter_path then
-      local directPath = Storage.chapter_path(job.bookId, job.chapterUid)
+    if Api.fetch_chapter_to_file and path then
       local n, ferr = Api.fetch_chapter_to_file(job.bookId,
-        { chapterUid = job.chapterUid }, directPath)
+        { chapterUid = job.chapterUid }, path)
       if n and tonumber(n) > 0 then
+        job.bytes = tonumber(n)
         job.phase = "handoff"
-        job.status = font_ok and "打开阅读器…" or "opening reader…"
+        job.status = font_ok
+            and ("已缓存 " .. fmt_bytes(n) .. " · 打开…")
+            or ("cached " .. fmt_bytes(n))
         job.pending_text = nil
+        if Storage and Storage.mark_chapter_complete then
+          pcall(Storage.mark_chapter_complete, job.bookId, job.chapterUid)
+        end
         if collectgarbage then collectgarbage("collect") end
         return "continue"
       end
       if ferr and ferr ~= "unsupported" then
-        -- A short-lived mirror can expire between the file probe and the
-        -- fallback request. Keep one bounded Lua fallback instead of exposing
-        -- the opaque host error immediately.
         log(string.format("[FQ] chapter_file_fallback err=%s", tostring(ferr)))
       end
     end
@@ -193,8 +333,9 @@ function ContentProvider.step(job, deps)
       return "fail"
     end
     job.pending_text = text
+    job.bytes = #text
     job.phase = "write"
-    job.status = font_ok and "写入缓存…" or "writing cache…"
+    job.status = font_ok and ("写入缓存 " .. fmt_bytes(#text)) or ("writing " .. fmt_bytes(#text))
     return "continue"
   end
 
@@ -206,6 +347,7 @@ function ContentProvider.step(job, deps)
         font_ok and "正文为空" or "empty body")
       return "fail"
     end
+    job.bytes = #body
     log(string.format("[FQ] cache_write_begin t=%s bytes=%s atomic=1",
       tostring(sys.millis()), tostring(#body)))
     local ok_write = Storage.save_chapter_text(job.bookId, job.chapterUid, body)
@@ -222,9 +364,9 @@ function ContentProvider.step(job, deps)
         font_ok and "章节缓存大小无效" or "invalid chapter cache size")
       return "fail"
     end
+    job.bytes = fsz
     job.phase = "handoff"
-    job.status = font_ok and "打开阅读器…" or "opening reader…"
-    -- fall through to handoff
+    job.status = font_ok and ("已缓存 " .. fmt_bytes(fsz) .. " · 打开…") or "opening…"
   end
 
   if job.phase == "handoff" then

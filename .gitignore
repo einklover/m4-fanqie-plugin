@@ -4,3 +4,4 @@ logs/
 *.session.json
 **/session.json
 
+tools/__pycache__/
