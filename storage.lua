@@ -35,15 +35,26 @@ function Storage.write_json(rel, doc)
   return fs.writeFile(rel, s)
 end
 
+local function progress_rel(bookId)
+  return "progress/" .. tostring(bookId or "") .. ".json"
+end
+
+-- Per-book progress file.  Never rewrites one shared progress.json: with 200+
+-- shelf books the shared file grows past the host readFile cap and every
+-- load_progress re-decodes it, which surfaces as "too large" in the UI.
 function Storage.load_progress(bookId)
-  local doc = Storage.read_json("progress.json") or {}
-  return doc[bookId]
+  if not bookId or bookId == "" then return nil end
+  local doc = Storage.read_json(progress_rel(bookId))
+  if doc then return doc end
+  -- Legacy: single shared progress.json from older plugin versions.
+  local legacy = Storage.read_json("progress.json")
+  if legacy and legacy[bookId] then return legacy[bookId] end
+  return nil
 end
 
 function Storage.save_progress_entry(bookId, entry)
-  local doc = Storage.read_json("progress.json") or {}
-  doc[bookId] = entry
-  return Storage.write_json("progress.json", doc)
+  if not bookId or bookId == "" then return false end
+  return Storage.write_json(progress_rel(bookId), entry)
 end
 
 -- True when chapter body for bookId/chapterUid is a non-empty SD file.

@@ -258,7 +258,7 @@ function ContentProvider.step(job, deps)
           if st0.phase == "connecting" then
             loader.pump({ ms = 50, bytes = 1024 })
           else
-            loader.pump({ ms = 120, bytes = 24 * 1024 })
+            loader.pump({ ms = 120, bytes = 48 * 1024 })
           end
         end
         local st = (type(loader.status) == "function" and loader.status()) or {}
@@ -284,14 +284,24 @@ function ContentProvider.step(job, deps)
           job.loader_phase = ""
           log(string.format("[FQ] loader fail → hop err=%s", tostring(st.error)))
           job.status = font_ok and ("回退下载 · " .. tostring(st.error)) or tostring(st.error)
-        elseif st.early or st.done then
+        elseif st.done then
+          -- Body complete.  The host owns the final open in the loader path:
+          -- it shows a loading placeholder on early open and re-opens with
+          -- the full file on completion (finishOk).  Do not call
+          -- open_native_reader here — it would race the host's final open.
           job.phase = "done"
           job.result = "handoff"
           job.bytes = st.bytes or job.bytes
-          job.loader_phase = st.done and "done" or "early"
-          log(string.format("[FQ] loader_handoff early=%s bytes=%s",
-            tostring(st.early), tostring(st.bytes)))
+          job.loader_phase = "done"
+          log(string.format("[FQ] loader_handoff done bytes=%s",
+            tostring(job.bytes)))
           return "done"
+        elseif st.early then
+          -- Early window: keep pumping; surface progress so the user sees
+          -- the download advancing instead of a frozen spinner.
+          job.status = (font_ok and "首屏已开 · 续传 " or "early · ")
+              .. fmt_bytes(job.bytes or 0)
+          return "continue"
         else
           return "continue"
         end

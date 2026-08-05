@@ -200,7 +200,11 @@ function Api.chapter_loader_spec(bookId, ch, relPath, openMeta)
     headers = headers(),
     out = relPath,
     extract = { kind = "json_field", path = { "data", "data" }, field = "content" },
-    early_bytes = 2048,
+    -- No early open: the native TxtReader paginates once from file size at
+    -- open, so an early 2KB open would freeze the chapter at ~4 pages while
+    -- the host keeps streaming the rest into the same file.  Open only when
+    -- the body is complete (host finishOk triggers the open).
+    early_bytes = 0,
     max_bytes = 4 * 1024 * 1024,
     timeout_ms = 30000,
     follow_redirects = true,
