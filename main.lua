@@ -879,9 +879,23 @@ function step_chapter_load()
   if not chapter_job then return end
 
   if r == "done" then
-    -- progressive loader may have already queued openText
+    -- open_native_reader should have set native_reader; never fake it while still loading.
     if screen == "loading" or screen == "toc" then
-      screen = "native_reader"
+      local path = job.path
+      if (not path or path == "") and Storage.chapter_path and cur_book then
+        path = Storage.chapter_path(cur_book.bookId, job.chapterUid or chapter_uid)
+      end
+      if path and path ~= "" then
+        local ok = open_native_reader(path, job.title or reader_title,
+          job.bookId or (cur_book and cur_book.bookId), job.chapterUid or chapter_uid)
+        if not ok and (screen == "loading" or screen == "toc") then
+          chapter_load_fail("E_HOST", font_ok and "打开失败" or "Open failed",
+            font_ok and "正文已下载但无法打开阅读器" or "body ready but openText failed")
+          return
+        end
+      end
+    end
+    if screen == "native_reader" or screen == "native_toc" then
       dirty = false
       frame_changed = false
     end
@@ -2204,12 +2218,21 @@ function provider_pump_work()
   local idx = tonumber(w.index) or -1
   local pid = tostring(w.providerId or "fanqie")
   if bookId == "" then return end
+  local function set_err(chapterUid, title, err)
+    if type(provider.setChapter) ~= "function" then return end
+    provider.setChapter({
+      providerId = pid, bookId = bookId, chapterUid = tostring(chapterUid or ""),
+      index = idx, title = title, state = "error", error = tostring(err or "prefetch"),
+    })
+  end
   -- FileRows work intentionally carries an empty UID. Resolve the bounded row
   -- before touching cache, network, or provider state.
   local chapterUid, title, resolveErr = Catalog.resolve_work(w)
   if not chapterUid or chapterUid == "" then
     log(string.format("[FQ] prefetch_resolve_fail book=%s idx=%s err=%s",
       bookId, tostring(idx), tostring(resolveErr or "empty_uid")))
+    -- Error (not Fetching) so idle/next can retry — leaving Fetching stuck forever.
+    set_err("", title, resolveErr or "empty_uid")
     return
   end
   if type(provider.setChapter) == "function" then
@@ -2218,26 +2241,21 @@ function provider_pump_work()
       title = title, state = "fetching", pct = 5,
     })
   end
+  local directPath = Storage.chapter_path and Storage.chapter_path(bookId, chapterUid) or nil
+  if directPath and Storage.chapter_complete and Storage.chapter_complete(bookId, chapterUid) then
+    provider_set_chapter_ready(bookId, chapterUid, directPath, idx)
+    return
+  end
   if Storage.chapter_file_size then
-    local fsz = Storage.chapter_file_size(bookId, chapterUid)
-    if fsz and fsz > 0 then
-      local path = Storage.chapter_path and Storage.chapter_path(bookId, chapterUid) or nil
-      if path then
-        provider_set_chapter_ready(bookId, chapterUid, path, idx)
-        return
-      end
+    local fsz = tonumber(Storage.chapter_file_size(bookId, chapterUid) or 0) or 0
+    if fsz > 0 and Storage.clear_chapter_cache then
+      pcall(Storage.clear_chapter_cache, bookId, chapterUid)
     end
   end
   if not ensure_network or not ensure_network() then
-    if type(provider.setChapter) == "function" then
-      provider.setChapter({
-        providerId = pid, bookId = bookId, chapterUid = chapterUid, index = idx,
-        title = title, state = "error", error = "net",
-      })
-    end
+    set_err(chapterUid, title, "net")
     return
   end
-  local directPath = Storage.chapter_path and Storage.chapter_path(bookId, chapterUid) or nil
   if Api.fetch_chapter_to_file and directPath then
     local n, ferr = Api.fetch_chapter_to_file(bookId, { chapterUid = chapterUid }, directPath)
     if n and tonumber(n) > 0 then
@@ -2247,35 +2265,20 @@ function provider_pump_work()
       return
     end
     if ferr and ferr ~= "unsupported" then
-      if type(provider.setChapter) == "function" then
-        provider.setChapter({
-          providerId = pid, bookId = bookId, chapterUid = chapterUid, index = idx,
-          title = title, state = "error", error = tostring(ferr),
-        })
-      end
+      set_err(chapterUid, title, ferr)
       return
     end
   end
   local text, err = Api.fetch_chapter_text(bookId, { chapterUid = chapterUid })
   if not text then
-    if type(provider.setChapter) == "function" then
-      provider.setChapter({
-        providerId = pid, bookId = bookId, chapterUid = chapterUid, index = idx,
-        title = title, state = "error", error = tostring(err or "fetch"),
-      })
-    end
+    set_err(chapterUid, title, err or "fetch")
     return
   end
   local ok_write = Storage.save_chapter_text and Storage.save_chapter_text(bookId, chapterUid, text)
   text = nil
   if collectgarbage then collectgarbage("collect") end
   if not ok_write then
-    if type(provider.setChapter) == "function" then
-      provider.setChapter({
-        providerId = pid, bookId = bookId, chapterUid = chapterUid, index = idx,
-        title = title, state = "error", error = "cache",
-      })
-    end
+    set_err(chapterUid, title, "cache")
     return
   end
   local path = Storage.chapter_path and Storage.chapter_path(bookId, chapterUid) or nil
@@ -2368,7 +2371,7 @@ function open_native_reader(path, title, bookId, chapterUid)
 end
 
 function init()
-  log("fanqie plugin init v0.1.0")
+  log("fanqie plugin init v0.2.18 code=29")
   begin_startup("font", 0, "starting")
 end
 

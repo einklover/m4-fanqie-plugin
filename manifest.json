@@ -1,11 +1,11 @@
 {
   "id": "com.fanqie.client",
   "name": "番茄小说",
-  "version": "0.2.17",
-  "versionCode": 28,
+  "version": "0.2.18",
+  "versionCode": 29,
   "entry": "main.lua",
   "author": "einklover",
-  "description": "番茄小说 0.2.13: 修复正文重定向请求失败、分页按需加载与 OOM 安全缓存",
+  "description": "0.2.18: 预取失败标 Error 可重试 + 完整缓存命中；此前 0.2.13 正文/分页/OOM 缓存",
   "files": [
     "main.lua",
     "storage.lua",

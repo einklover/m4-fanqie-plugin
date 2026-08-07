@@ -285,21 +285,39 @@ function ContentProvider.step(job, deps)
           log(string.format("[FQ] loader fail → hop err=%s", tostring(st.error)))
           job.status = font_ok and ("回退下载 · " .. tostring(st.error)) or tostring(st.error)
         elseif st.done then
-          -- Body complete.  The host owns the final open in the loader path:
-          -- it shows a loading placeholder on early open and re-opens with
-          -- the full file on completion (finishOk).  Do not call
-          -- open_native_reader here — it would race the host's final open.
-          job.phase = "done"
-          job.result = "handoff"
+          -- Explicit plugin open after body complete.  Relying only on host
+          -- finishOk/queueOpen left the loading screen forever when handoff
+          -- was dropped (same bug as jjwxc).
           job.bytes = st.bytes or job.bytes
           job.loader_phase = "done"
-          log(string.format("[FQ] loader_handoff done bytes=%s",
+          job.status = font_ok and "打开阅读器…" or "opening…"
+          log(string.format("[FQ] loader_done bytes=%s → open_native",
             tostring(job.bytes)))
-          return "done"
+          if (job.bytes or 0) < 1 then
+            fail(job, "E_BODY", font_ok and "正文失败" or "Chapter failed",
+              font_ok and "正文为空" or "empty body")
+            return "fail"
+          end
+          if Storage and Storage.mark_chapter_complete then
+            pcall(Storage.mark_chapter_complete, job.bookId, job.chapterUid)
+          end
+          local path = job.path
+          if (not path or path == "") and Storage and Storage.chapter_path then
+            path = Storage.chapter_path(job.bookId, job.chapterUid)
+            job.path = path
+          end
+          local ok, err = deps.open_native_reader(path, job.title, job.bookId, job.chapterUid)
+          if ok then
+            job.phase = "done"
+            job.result = "handoff"
+            return "done"
+          end
+          fail(job, "E_HOST", font_ok and "需要固件支持" or "Firmware required",
+            font_ok and ("原生阅读桥不可用: " .. tostring(err or "no_reader"))
+              or ("native reader unavailable: " .. tostring(err or "no_reader")))
+          return "fail"
         elseif st.early then
-          -- Early window: keep pumping; surface progress so the user sees
-          -- the download advancing instead of a frozen spinner.
-          job.status = (font_ok and "首屏已开 · 续传 " or "early · ")
+          job.status = (font_ok and "下载中 " or "dl ")
               .. fmt_bytes(job.bytes or 0)
           return "continue"
         else
