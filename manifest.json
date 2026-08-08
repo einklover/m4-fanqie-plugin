@@ -1,8 +1,8 @@
 {
   "id": "com.fanqie.client",
   "name": "番茄小说",
-  "version": "0.2.18",
-  "versionCode": 29,
+  "version": "0.2.19",
+  "versionCode": 30,
   "entry": "main.lua",
   "author": "einklover",
   "description": "0.2.18: 预取失败标 Error 可重试 + 完整缓存命中；此前 0.2.13 正文/分页/OOM 缓存",
