@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<m4ui version="1" start="shelf">
+  <screen id="shelf" title="@app.name">
+    <text text="@page.status" bold="true" height="42" />
+    <list
+      id="books"
+      source="provider.books"
+      titleField="title"
+      subtitleField="author"
+      valueField="progress"
+      onActivate="provider.openBook"
+      pageSize="8" />
+    <buttons
+      back="返回"
+      primary="打开"
+      onBack="system.back"
+      onPrimary="provider.openSelected" />
+  </screen>
+</m4ui>
