@@ -1,7 +1,9 @@
 <?xml version="1.0"?>
-<m4ui version="1" start="shelf">
-  <screen id="shelf" title="@app.name">
-    <text text="@page.status" bold="true" height="42" />
+<m4ui version="1" start="home" theme="wap">
+  <screen id="home" title="番茄小说" class="compact">
+    <text text="我的书架" class="hero" />
+    <text text="@page.status" class="meta inset" />
+    <divider class="hairline inset" />
     <list
       id="books"
       source="provider.books"
@@ -9,11 +11,52 @@
       subtitleField="author"
       valueField="progress"
       onActivate="provider.openBook"
+      class="inset"
       pageSize="8" />
     <buttons
       back="返回"
-      primary="打开"
+      primary="阅读"
+      left="发现"
+      right="排行"
       onBack="system.back"
-      onPrimary="provider.openSelected" />
+      onPrimary="provider.openSelected"
+      onLeft="ui.go:discover"
+      onRight="ui.go:rank" />
+  </screen>
+
+  <screen id="discover" title="番茄 · 发现" class="compact">
+    <text text="发现" class="section" />
+    <flowText
+      text="推荐  ·  分类  ·  完结  ·  新书&#10;男频  ·  女频  ·  玄幻  ·  都市"
+      class="compact inset" />
+    <spacer height="6" />
+    <text text="适合墨水屏的发现页" class="section" />
+    <flowText
+      text="保留作品名、作者、状态和在读信息；默认不下载大封面，不做无限瀑布流。"
+      class="compact inset" />
+    <text
+      text="Native Discovery 接入后，推荐与分类结果直接流式写入 FileRows。"
+      class="meta inset" />
+    <buttons
+      back="书架"
+      right="排行"
+      onBack="ui.go:home"
+      onRight="ui.go:rank" />
+  </screen>
+
+  <screen id="rank" title="番茄 · 排行" class="compact">
+    <text text="排行榜" class="section" />
+    <flowText
+      text="阅读榜  ·  新书榜&#10;按分类浏览  ·  连载 / 完结状态&#10;作品名  ·  作者  ·  在读  ·  最近更新"
+      class="compact inset" height="86" />
+    <divider class="hairline inset" />
+    <text
+      text="榜单采用 ranked 文字列表，不复制网页的大图卡片，优先速度和信息密度。"
+      class="meta inset" />
+    <buttons
+      back="书架"
+      left="发现"
+      onBack="ui.go:home"
+      onLeft="ui.go:discover" />
   </screen>
 </m4ui>
