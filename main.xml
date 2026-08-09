@@ -17,11 +17,11 @@
       back="返回"
       primary="阅读"
       left="发现"
-      right="排行"
+      right="刷新"
       onBack="system.back"
       onPrimary="provider.openSelected"
       onLeft="ui.go:discover"
-      onRight="ui.go:rank" />
+      onRight="provider.refresh" />
   </screen>
 
   <screen id="discover" title="番茄 · 发现" class="compact">
@@ -30,12 +30,12 @@
       text="推荐  ·  分类  ·  完结  ·  新书&#10;男频  ·  女频  ·  玄幻  ·  都市"
       class="compact inset" />
     <spacer height="6" />
-    <text text="适合墨水屏的发现页" class="section" />
+    <text text="墨水屏书单" class="section" />
     <flowText
-      text="保留作品名、作者、状态和在读信息；默认不下载大封面，不做无限瀑布流。"
+      text="作品名  ·  作者  ·  状态  ·  最近更新&#10;默认不下载大封面，不使用无限瀑布流"
       class="compact inset" />
     <text
-      text="Native Discovery 接入后，推荐与分类结果直接流式写入 FileRows。"
+      text="首页当前自动载入公开都市书单，可随时刷新。"
       class="meta inset" />
     <buttons
       back="书架"
@@ -47,11 +47,11 @@
   <screen id="rank" title="番茄 · 排行" class="compact">
     <text text="排行榜" class="section" />
     <flowText
-      text="阅读榜  ·  新书榜&#10;按分类浏览  ·  连载 / 完结状态&#10;作品名  ·  作者  ·  在读  ·  最近更新"
+      text="阅读榜  ·  新书榜&#10;男频  ·  女频  ·  分类榜&#10;连载 / 完结  ·  最近更新"
       class="compact inset" height="86" />
     <divider class="hairline inset" />
     <text
-      text="榜单采用 ranked 文字列表，不复制网页的大图卡片，优先速度和信息密度。"
+      text="榜单采用高密度文字行，优先翻页速度和可读性。"
       class="meta inset" />
     <buttons
       back="书架"
